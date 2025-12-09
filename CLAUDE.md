@@ -1,12 +1,72 @@
-# CLAUDE.md - Impact Score Calculator
+# CLAUDE.md - Jira Helper Toolkit
 
 ## Project Overview
 
-**Impact Score Calculator** is a Python toolkit for calculating Jira ticket impact scores used in Redis Cloud support operations. It automates the scoring of support tickets based on severity, customer ARR, frequency, workarounds, SLA breaches, and RCA action items.
+**Jira Helper** is a Python toolkit for Redis Cloud support operations. It provides:
+1. **Impact Score Calculation** - Automated scoring of support tickets (0-100+ points)
+2. **Zendesk-to-Jira Conversion** - AI-powered ticket analysis and Jira bug creation
+3. **RCA Generation** - Root Cause Analysis form generation
 
 **GitHub Repository**: [https://github.com/markotrapani/impact-score-calculator](https://github.com/markotrapani/impact-score-calculator)
 
 **Parent Repository**: Part of [marko-projects](https://github.com/markotrapani/marko-projects) as a git submodule
+
+---
+
+## 🤖 LLM Integration (Claude)
+
+This toolkit integrates with Claude for intelligent ticket analysis. **Two modes available:**
+
+### Mode 1: Interactive (No API Key Required) ✅ RECOMMENDED
+
+Uses your existing Claude Code / Claude Max subscription - no additional API costs!
+
+**Workflow:**
+```bash
+# Step 1: Generate analysis prompt from Zendesk PDF
+python3 src/claude_interactive.py <zendesk_pdf>
+
+# Step 2: Copy the generated prompt and paste into Claude Code (this conversation)
+cat output/claude_prompt_XXXXX.txt
+
+# Step 3: Claude analyzes and responds with SUMMARY: and DESCRIPTION:
+
+# Step 4: Save Claude's response to the response file
+# (copy Claude's output to output/claude_response_XXXXX.txt)
+
+# Step 5: Create Jira ticket from Claude's response
+python3 src/create_jira_from_claude_response.py output/claude_response_XXXXX.txt
+```
+
+**Key files:**
+- `src/claude_interactive.py` - Generates prompts for Claude Code
+- `src/create_jira_from_claude_response.py` - Processes Claude's response into Jira format
+
+### Mode 2: Automatic API (Requires `ANTHROPIC_API_KEY`)
+
+Direct API calls using the Anthropic SDK - fully automated but requires API access.
+
+**Setup:**
+```bash
+export ANTHROPIC_API_KEY="your-api-key"
+```
+
+**Usage:**
+```bash
+python3 src/create_jira_from_zendesk.py <zendesk_pdf> --use-claude
+```
+
+**Key files:**
+- `src/claude_analyzer.py` - Anthropic SDK integration (claude-sonnet-4-20250514)
+- `src/create_jira_from_zendesk.py` - Main CLI with `--use-claude` flag
+
+**API Details:**
+| Setting | Value |
+|---------|-------|
+| SDK | `anthropic>=0.39.0` |
+| Model | `claude-sonnet-4-20250514` |
+| Temperature | 0 (deterministic) |
+| Max tokens | 8000 |
 
 ---
 
@@ -15,39 +75,59 @@
 This toolkit helps prioritize Redis Cloud support tickets by:
 - Automatically analyzing Jira ticket exports
 - Calculating impact scores (0-100+ points) based on 6 key components
+- Converting Zendesk tickets to structured Jira bugs using Claude AI
 - Providing batch processing for multiple tickets
 - Offering interactive estimation for single tickets
 
-**Primary Use Case**: Redis Cloud Customer Success team ticket prioritization
+**Primary Use Case**: Redis Cloud Customer Success team ticket prioritization and Jira creation
 
 ---
 
 ## 📁 Project Structure
 
 ```
-impact-score-calculator/
+jira-helper/
 ├── README.md                           # Main project documentation
 ├── CLAUDE.md                          # This file - Claude Code instructions
-├── ROADMAP.md                         # Project roadmap and future plans
 ├── requirements.txt                    # Python dependencies
 ├── .gitignore                         # Git ignore rules
 │
-├── Python Scripts (Core Tools)
-├── intelligent_estimator.py           # AI-powered auto-estimation (primary tool)
-├── calculate_jira_scores.py           # Batch processor
-├── estimate_impact_score.py           # Interactive single-ticket estimator
-├── impact_score_calculator.py         # Core calculation library
-├── jira_impact_score_processor.py     # Batch processing engine
+├── src/                               # Python Scripts
+│   ├── Claude Integration
+│   │   ├── claude_interactive.py      # Interactive mode (no API key)
+│   │   ├── claude_analyzer.py         # Anthropic SDK integration
+│   │   └── create_jira_from_claude_response.py
+│   │
+│   ├── Zendesk-to-Jira
+│   │   ├── create_jira_from_zendesk.py # Main CLI tool
+│   │   ├── jira_creator.py            # Jira ticket data structures
+│   │   ├── universal_ticket_parser.py # PDF/document parsing
+│   │   └── label_extractor.py         # Keyword-based label extraction
+│   │
+│   ├── Impact Score Calculation
+│   │   ├── intelligent_estimator.py   # AI-powered auto-estimation
+│   │   ├── impact_score_calculator.py # Core calculation library
+│   │   ├── calculate_jira_scores.py   # Batch processor
+│   │   ├── estimate_impact_score.py   # Interactive estimator
+│   │   └── jira_impact_score_processor.py
+│   │
+│   └── RCA Generation
+│       ├── create_rca.py              # RCA form creation
+│       ├── generate_rca_form.py       # Form generation
+│       ├── generate_rca_summary.py    # Summary generation
+│       └── generate_complete_rca.py   # Complete RCA workflow
 │
-└── Documentation
-    ├── INTELLIGENT_ESTIMATOR_GUIDE.md
-    ├── Impact_Score_Model.md
-    ├── Impact_Score_Visual_Guide.md
-    ├── JIRA_PROCESSOR_USER_GUIDE.md
-    ├── ESTIMATOR_GUIDE.md
-    ├── TOOL_SELECTION_GUIDE.md
-    ├── QUICK_REFERENCE.md
-    └── SCRIPT_UPDATE_LOG.md
+├── docs/                              # Documentation
+│   ├── ROADMAP.md
+│   ├── IMPACT_SCORE_MODEL.md
+│   ├── IMPACT_SCORE_VISUAL_GUIDE.md
+│   ├── INTELLIGENT_ESTIMATOR_GUIDE.md
+│   ├── JIRA_CREATION_GUIDE.md
+│   ├── JIRA_PROCESSOR_USER_GUIDE.md
+│   ├── TOOL_SELECTION_GUIDE.md
+│   └── SCRIPT_ARCHITECTURE.md
+│
+└── output/                            # Generated files (gitignored)
 ```
 
 ---
@@ -61,10 +141,11 @@ impact-score-calculator/
   - `pymupdf` (>= 1.23.0) - PDF extraction
   - `python-docx` (>= 1.1.0) - Word document support
   - `lxml` (>= 5.0.0) - XML parsing
+  - `anthropic` (>= 0.39.0) - Claude API integration (optional)
 - **Supported Input Formats**:
   - **Jira**: PDF, Excel (.xlsx), XML, Word (.docx)
   - **Zendesk**: PDF
-- **Output Formats**: Console, JSON, Excel
+- **Output Formats**: Console, JSON, Excel, Markdown
 
 ---
 
@@ -213,12 +294,18 @@ When reviewing changes:
 ## 📦 Dependencies
 
 Current dependencies in `requirements.txt`:
+
 ```
 pandas>=2.0.0
 openpyxl>=3.1.0
+pymupdf>=1.23.0
+python-docx>=1.1.0
+lxml>=5.0.0
+anthropic>=0.39.0  # Optional - only needed for --use-claude API mode
 ```
 
 **When adding dependencies**:
+
 - Justify the need (avoid bloat)
 - Update requirements.txt
 - Update README.md if user-facing
@@ -291,4 +378,4 @@ For questions about:
 
 ---
 
-**Last Updated**: October 15, 2025
+**Last Updated**: December 8, 2025
