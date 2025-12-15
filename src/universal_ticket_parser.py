@@ -95,7 +95,16 @@ class UniversalTicketParser:
 
     def _is_zendesk_pdf(self) -> bool:
         """Detect if PDF is from Zendesk."""
+        # FIRST: Check filename - most reliable indicator
+        filename_lower = self.file_path.name.lower()
+        if 'zendesk' in filename_lower:
+            return True
+
         text_lower = self.raw_text.lower()
+
+        # SECOND: Check for zendesk.com URL in content
+        if 'zendesk.com' in text_lower:
+            return True
 
         # Check for strong Jira indicators first (to avoid false positives)
         jira_indicators = [
@@ -108,14 +117,15 @@ class UniversalTicketParser:
         if jira_matches >= 3:
             return False
 
-        # Check for Zendesk-specific indicators
+        # Check for Zendesk-specific indicators (relaxed - now only need 2)
         zendesk_indicators = [
-            'ticket #', 'requester:', 'submitted', 'received via'
+            'ticket #', 'requester', 'submitted', 'received via',
+            'sla package', 'zendesk'
         ]
         zendesk_matches = sum(1 for indicator in zendesk_indicators if indicator in text_lower)
 
-        # If 3+ Zendesk indicators match and no strong Jira indicators, likely Zendesk
-        return zendesk_matches >= 3
+        # If 2+ Zendesk indicators match, likely Zendesk
+        return zendesk_matches >= 2
 
     def _parse_zendesk_pdf(self) -> Dict:
         """Parse Zendesk PDF export."""

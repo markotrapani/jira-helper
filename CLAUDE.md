@@ -15,18 +15,35 @@
 
 ## 🤖 LLM Integration (Claude)
 
-This toolkit integrates with Claude for intelligent ticket analysis. **Two modes available:**
+This toolkit integrates with Claude for intelligent ticket analysis. **Three modes available:**
 
-### Mode 1: Interactive (No API Key Required) ✅ RECOMMENDED
+### Mode 1: Claude Code Direct (No API Key) ✅ RECOMMENDED
 
-Uses your existing Claude Code / Claude Max subscription - no additional API costs!
+When working inside a Claude Code session, Claude can handle the entire workflow automatically.
+
+**Usage:** Simply ask Claude Code:
+> "Generate a Jira from the PDF I dropped in the repo"
+
+**What Claude Code does automatically:**
+
+1. Finds and parses the Zendesk PDF using `universal_ticket_parser.py`
+2. Analyzes the ticket content directly (no API call needed - Claude IS the session)
+3. Saves the analysis to `output/claude_response_<ticket_id>.txt`
+4. Runs `create_jira_from_claude_response.py` to generate the Jira markdown
+5. Outputs the final Jira ticket ready for copy/paste
+
+**Why this works:** Claude Code sessions ARE Claude - no need to call an external API or copy/paste prompts. The analysis happens inline.
+
+### Mode 2: Interactive Manual (No API Key)
+
+For use outside Claude Code (e.g., terminal-only). Requires manual copy/paste.
 
 **Workflow:**
 ```bash
 # Step 1: Generate analysis prompt from Zendesk PDF
 python3 src/claude_interactive.py <zendesk_pdf>
 
-# Step 2: Copy the generated prompt and paste into Claude Code (this conversation)
+# Step 2: Copy the generated prompt and paste into Claude (web/app)
 cat output/claude_prompt_XXXXX.txt
 
 # Step 3: Claude analyzes and responds with SUMMARY: and DESCRIPTION:
@@ -39,10 +56,11 @@ python3 src/create_jira_from_claude_response.py output/claude_response_XXXXX.txt
 ```
 
 **Key files:**
-- `src/claude_interactive.py` - Generates prompts for Claude Code
+
+- `src/claude_interactive.py` - Generates prompts for Claude
 - `src/create_jira_from_claude_response.py` - Processes Claude's response into Jira format
 
-### Mode 2: Automatic API (Requires `ANTHROPIC_API_KEY`)
+### Mode 3: Automatic API (Requires `ANTHROPIC_API_KEY`)
 
 Direct API calls using the Anthropic SDK - fully automated but requires API access.
 
@@ -378,4 +396,4 @@ For questions about:
 
 ---
 
-**Last Updated**: December 8, 2025
+**Last Updated**: December 15, 2025
