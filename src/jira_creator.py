@@ -468,6 +468,30 @@ class JiraCreator:
             priority_level = self._get_priority_level(impact_score)
             lines.append(f"**IMPACT SCORE:** {int(impact_score)} points ({priority_level})")
 
+        # Add impact score breakdown if components available
+        if components:
+            lines.append("")
+            lines.append("### Impact Score Breakdown")
+            lines.append("| Component | Score | Reason |")
+            lines.append("|-----------|-------|--------|")
+
+            # Define component display order and names
+            component_display = [
+                ('impact_severity', 'Impact & Severity', 38),
+                ('customer_arr', 'Customer ARR', 15),
+                ('sla_breach', 'SLA Breach', 8),
+                ('frequency', 'Frequency', 16),
+                ('workaround', 'Workaround', 15),
+                ('rca_action_item', 'RCA Action Item', 8),
+            ]
+
+            for comp_key, comp_name, max_pts in component_display:
+                if comp_key in components:
+                    comp_data = components[comp_key]
+                    score = comp_data.get('score', 0)
+                    reason = comp_data.get('reason', 'Unknown')
+                    lines.append(f"| {comp_name} | {score}/{max_pts} | {reason} |")
+
         lines.append("")
 
         # Summary section
