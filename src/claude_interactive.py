@@ -66,6 +66,15 @@ Analyze this Zendesk conversation and generate:
 
 Use this format with markdown headers (##):
 
+## Customer Context
+| Field | Value |
+|-------|-------|
+| Customer | [Company name] |
+| Account # | [Account ID if available] |
+| Subscription ID | [Subscription ID(s)] |
+| Product | [Redis Cloud Pro/Enterprise, Active-Active, etc.] |
+| Region(s) | [AWS/GCP regions affected] |
+
 ## Problem Statement
 [2-3 sentence overview of the issue and its impact]
 [If customer has operational constraints (peak freeze, maintenance windows, business-critical periods), mention them BRIEFLY at the end of this section]
@@ -101,8 +110,9 @@ Use this format with markdown headers (##):
 [If not reproducible or no reproduction provided: skip this section]
 
 ## Technical Details
-[Key technical information: version numbers, cluster/node IDs, affected components, OVC values, etc.]
+[Technical specifics NOT in Customer Context: software versions, cluster/node IDs, specific error codes, OVC values, config settings, etc.]
 [Use code blocks for technical data]
+[Do NOT repeat customer/account/subscription info - that's in Customer Context above]
 
 ## Ask From R&D
 [Structure this section as follows:]
