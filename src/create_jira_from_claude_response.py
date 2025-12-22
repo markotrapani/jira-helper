@@ -29,9 +29,9 @@ def parse_claude_response(response_file: Path) -> tuple[str, str]:
     with open(response_file, 'r') as f:
         content = f.read()
 
-    # Find the separator line if present
+    # Find the separator line if present (only split on FIRST ---)
     if '---' in content:
-        parts = content.split('---')
+        parts = content.split('---', 1)  # maxsplit=1 to only split on first occurrence
         if len(parts) > 1:
             content = parts[1].strip()
 
