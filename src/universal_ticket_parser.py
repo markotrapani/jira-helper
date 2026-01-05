@@ -46,6 +46,10 @@ class UniversalTicketParser:
         'zendesk': ['.pdf']
     }
 
+    # Minimum image dimensions to extract (filters out logos/icons)
+    MIN_IMAGE_WIDTH = 500
+    MIN_IMAGE_HEIGHT = 100
+
     def __init__(self, file_path: Union[str, Path]):
         """Initialize parser with file path."""
         self.file_path = Path(file_path)
@@ -53,6 +57,7 @@ class UniversalTicketParser:
         self.source_type = None  # 'jira' or 'zendesk'
         self.raw_text = ""
         self.ticket_data = {}
+        self.extracted_images = []  # List of extracted image info
 
     def parse(self) -> Dict:
         """Parse the ticket file and return normalized data."""
@@ -92,6 +97,85 @@ class UniversalTicketParser:
             return self._parse_zendesk_pdf()
         else:
             return self._parse_jira_pdf()
+
+    def extract_images(self, output_dir: Optional[Union[str, Path]] = None) -> List[Dict]:
+        """
+        Extract meaningful images from PDF (filters out logos/icons).
+
+        Args:
+            output_dir: Directory to save images. If None, uses output/images_<ticket_id>/
+
+        Returns:
+            List of dicts with image info: {path, filename, width, height, page, description}
+        """
+        if not PDF_AVAILABLE:
+            raise ImportError("PyMuPDF (pymupdf) required for image extraction")
+
+        if self.file_ext != '.pdf':
+            return []
+
+        # Determine ticket ID for output folder
+        ticket_id = self.ticket_data.get('ticket_id') or self.ticket_data.get('issue_key') or 'unknown'
+        if ticket_id == 'unknown':
+            # Try to extract from filename
+            import re
+            match = re.search(r'(\d{5,7})', self.file_path.name)
+            if match:
+                ticket_id = match.group(1)
+
+        # Set up output directory
+        if output_dir is None:
+            output_dir = Path('output') / f'images_{ticket_id}'
+        else:
+            output_dir = Path(output_dir)
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Extract images
+        doc = fitz.open(self.file_path)
+        extracted = []
+
+        for page_num, page in enumerate(doc):
+            images = page.get_images()
+
+            for img_idx, img in enumerate(images):
+                xref = img[0]
+                try:
+                    base_image = doc.extract_image(xref)
+                    width = base_image['width']
+                    height = base_image['height']
+
+                    # Filter out small images (logos, icons, etc.)
+                    if width < self.MIN_IMAGE_WIDTH or height < self.MIN_IMAGE_HEIGHT:
+                        continue
+
+                    # Save image
+                    ext = base_image['ext']
+                    filename = f'page{page_num + 1}_img{img_idx + 1}_{width}x{height}.{ext}'
+                    filepath = output_dir / filename
+
+                    with open(filepath, 'wb') as f:
+                        f.write(base_image['image'])
+
+                    # Store image info
+                    img_info = {
+                        'path': str(filepath),
+                        'relative_path': f'images_{ticket_id}/{filename}',
+                        'filename': filename,
+                        'width': width,
+                        'height': height,
+                        'page': page_num + 1,
+                        'description': ''  # To be filled by Claude analysis
+                    }
+                    extracted.append(img_info)
+
+                except Exception as e:
+                    # Skip images that can't be extracted
+                    continue
+
+        doc.close()
+        self.extracted_images = extracted
+        return extracted
 
     def _is_zendesk_pdf(self) -> bool:
         """Detect if PDF is from Zendesk."""
@@ -142,8 +226,9 @@ class UniversalTicketParser:
             'created': self._extract_zendesk_field(r'Created:\s*(.+)'),
             'updated': self._extract_zendesk_field(r'Updated:\s*(.+)'),
             'labels': self._extract_zendesk_tags(),
-            'support_tier': self._extract_support_tier(),  # NEW: Extract support tier for ARR estimation
-            'raw_text': self.raw_text
+            'support_tier': self._extract_support_tier(),  # Extract support tier for ARR estimation
+            'raw_text': self.raw_text,
+            'extracted_images': []  # Will be populated by extract_images()
         }
 
         return data
@@ -352,7 +437,8 @@ class UniversalTicketParser:
             'labels': self._extract_jira_labels(),
             'rca': self._extract_jira_field(r'RCA:\s*(.+)'),
             'customer': self._extract_jira_customer(),
-            'raw_text': self.raw_text
+            'raw_text': self.raw_text,
+            'extracted_images': []  # Will be populated by extract_images()
         }
 
         return data
@@ -553,16 +639,54 @@ def parse_ticket_file(file_path: Union[str, Path]) -> Dict:
 
 if __name__ == '__main__':
     import sys
+    import argparse
 
-    if len(sys.argv) < 2:
-        print("Usage: python universal_ticket_parser.py <ticket_file>")
-        sys.exit(1)
+    arg_parser = argparse.ArgumentParser(
+        description='Parse Jira/Zendesk ticket exports (PDF, Excel, XML, Word)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s zendesk_ticket.pdf
+  %(prog)s zendesk_ticket.pdf --extract-images
+  %(prog)s jira_export.xlsx
+        """
+    )
 
-    file_path = sys.argv[1]
+    arg_parser.add_argument('file', help='Path to ticket file')
+    arg_parser.add_argument(
+        '--extract-images',
+        action='store_true',
+        help='Extract images from PDF and save to output/images_<ticket_id>/'
+    )
+    arg_parser.add_argument(
+        '--images-only',
+        action='store_true',
+        help='Only extract images, skip full parsing output'
+    )
+
+    args = arg_parser.parse_args()
 
     try:
-        data = parse_ticket_file(file_path)
-        print(json.dumps(data, indent=2))
+        parser = UniversalTicketParser(args.file)
+        data = parser.parse()
+
+        # Extract images if requested
+        if args.extract_images or args.images_only:
+            images = parser.extract_images()
+            data['extracted_images'] = images
+
+            if images:
+                print(f"Extracted {len(images)} images:", file=sys.stderr)
+                for img in images:
+                    print(f"  - {img['filename']} ({img['width']}x{img['height']}) from page {img['page']}", file=sys.stderr)
+            else:
+                print("No meaningful images found (min 500x100px)", file=sys.stderr)
+
+        if not args.images_only:
+            # Don't include raw_text in JSON output (too verbose)
+            output_data = {k: v for k, v in data.items() if k != 'raw_text'}
+            print(json.dumps(output_data, indent=2))
+
     except Exception as e:
         print(f"Error parsing file: {e}", file=sys.stderr)
         sys.exit(1)

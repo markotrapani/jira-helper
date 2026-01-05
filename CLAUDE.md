@@ -13,6 +13,47 @@
 
 ---
 
+## 🚨 CRITICAL: Output Format Rules
+
+**NEVER mix markup formats in output files!**
+
+| File Extension | Use This Format | NEVER Use |
+|----------------|-----------------|-----------|
+| `.md` | Markdown (`##`, `**bold**`, ``` ``` ```) | Jira wiki (`h2.`, `{code}`, `*bold*`) |
+| `.txt` (for Jira) | Jira wiki markup (`h2.`, `{code:json}`, `*bold*`) | Markdown |
+
+**Why this matters:**
+- `.md` files are previewed in IDEs/GitHub - Jira markup renders as garbage
+- Jira description fields expect Jira wiki markup - Markdown won't render
+
+**When generating Jira tickets:**
+- `output/JIRA-*.md` files → Use **Markdown** (for preview/review)
+- Content pasted into Jira → Convert to **Jira wiki markup** if needed
+
+---
+
+## 🚨 CRITICAL: Impact Score Values are DISCRETE
+
+**NEVER make up impact score numbers!** Each component has specific allowed values - not arbitrary numbers.
+
+| Component | Allowed Values | NOT Allowed |
+|-----------|---------------|-------------|
+| Impact & Severity | **38, 30, 22, 16, 8** | 28, 25, 20, etc. |
+| Customer ARR | **15, 13, 10, 8, 5, 0** | 12, 11, 7, etc. |
+| SLA Breach | **8 or 0** | Any other number |
+| Frequency | **16, 8, 0** | 12, 10, 4, etc. |
+| Workaround | **15, 12, 10, 5** | 14, 11, 8, etc. |
+| RCA Action Item | **8 or 0** | Any other number |
+
+**When generating impact scores:**
+1. Use `intelligent_estimator.py` to calculate scores from PDF
+2. Or manually select from the discrete values above
+3. **NEVER** eyeball a total and reverse-engineer fake component values
+
+See [docs/IMPACT_SCORE_MODEL.md](docs/IMPACT_SCORE_MODEL.md) for full scoring criteria.
+
+---
+
 ## 🤖 LLM Integration (Claude)
 
 This toolkit integrates with Claude for intelligent ticket analysis. **Three modes available:**
@@ -26,13 +67,85 @@ When working inside a Claude Code session, Claude can handle the entire workflow
 
 **What Claude Code does automatically:**
 
-1. Finds and parses the Zendesk PDF using `universal_ticket_parser.py`
-2. Analyzes the ticket content directly (no API call needed - Claude IS the session)
-3. Saves the analysis to `output/claude_response_<ticket_id>.txt`
-4. Runs `create_jira_from_claude_response.py` to generate the Jira markdown
-5. Outputs the final Jira ticket ready for copy/paste
+1. Finds and parses the Zendesk PDF using `universal_ticket_parser.py --extract-images`
+2. **Views extracted images** to understand screenshots and visual evidence
+3. Analyzes the ticket content directly (no API call needed - Claude IS the session)
+4. Saves the analysis to `output/claude_response_<ticket_id>.txt`
+5. Runs `create_jira_from_claude_response.py` to generate the Jira markdown
+6. **Embeds relevant images inline** in the description where they provide context
+7. Outputs the final Jira ticket ready for copy/paste
 
 **Why this works:** Claude Code sessions ARE Claude - no need to call an external API or copy/paste prompts. The analysis happens inline.
+
+---
+
+## 📸 Image Extraction & Embedding
+
+**CRITICAL:** When generating Jira tickets, images must be **embedded inline with context**, not just listed as attachments at the end.
+
+### Image Extraction
+
+The parser extracts meaningful images (>500px width) from PDFs:
+
+```bash
+python3 src/universal_ticket_parser.py <pdf_file> --extract-images
+```
+
+Images are saved to `output/images_<ticket_id>/` with descriptive filenames:
+- `page3_img1_1212x799.png` - Page 3, image 1, 1212x799 pixels
+
+### Viewing Images (Claude Code)
+
+After extraction, **view each image** using the Read tool to understand what it shows:
+
+```python
+# Claude Code should read each image file to see its contents
+Read("output/images_152561/page3_img1_1212x799.png")
+```
+
+### Embedding Images Inline
+
+**DO NOT** just list images at the end as "Attachments". Instead, embed them **inline with the relevant description text**:
+
+**❌ WRONG - Images as attachments only:**
+```markdown
+### Technical Details
+Users get a 403 error when configuring MFA.
+
+## Attachments
+- page3_img1.png
+- page9_img1.png
+```
+
+**✅ CORRECT - Images embedded inline with context:**
+```markdown
+### Technical Details
+
+Users encounter the error on the MFA configuration page when attempting to set up SMS MFA:
+
+![MFA Configuration Page](images_152561/page3_img1_1212x799.png)
+
+The account logs show MFA enforcement was toggled on/off repeatedly, which may be related to the issue:
+
+![MFA Enforcement Logs](images_152561/page9_img1_2966x1822.png)
+
+Kibana search shows no MFA configuration logs for the affected user, indicating the request never reached the backend:
+
+![Kibana No Results](images_152561/page10_img3_1788x493.png)
+```
+
+### Image Selection Guidelines
+
+Not all extracted images are useful. Prioritize:
+1. **Error screenshots** - UI showing the actual error
+2. **Log screenshots** - Kibana, CloudWatch, or system logs
+3. **Configuration screens** - Settings pages showing current state
+4. **Evidence screenshots** - Proof of issue (metrics, dashboards)
+
+Skip:
+- Duplicate images (same screenshot appearing multiple times)
+- Generic UI without relevant context
+- Redacted/blurred images with no useful info
 
 ### Mode 2: Interactive Manual (No API Key)
 
