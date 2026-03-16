@@ -238,23 +238,36 @@ class UniversalTicketParser:
         Extract Zendesk ticket ID with improved logic.
 
         Priority order:
-        1. Filename (most reliable): redislabs.zendesk.com_tickets_149320_print.pdf
-        2. First line of PDF (primary ticket): #149320 Customer - Summary
-        3. Fallback to any "Ticket #" reference
+        1. Filename — URL-style:  redislabs.zendesk.com_tickets_149320_print.pdf
+        2. Filename — hash-style: #149320 - Summary.pdf  or  149320-summary.pdf
+        3. Zendesk URL embedded in PDF text: /tickets/149320
+        4. First line of PDF: #149320 Customer - Summary
+        5. Fallback: any "Ticket #" reference
         """
-        # Method 1: Extract from filename (most reliable)
         filename = self.file_path.name
+
+        # Method 1: URL-derived filename (most reliable)
         filename_match = re.search(r'tickets?_(\d+)', filename, re.IGNORECASE)
         if filename_match:
             return filename_match.group(1)
 
-        # Method 2: Look for #XXXXXX pattern in first 2000 chars (primary ticket)
+        # Method 2: Hash-prefix or bare numeric filename (#157521 - ..., 157521-...)
+        hash_match = re.search(r'^#?(\d{5,7})\b', filename)
+        if hash_match:
+            return hash_match.group(1)
+
+        # Method 3: Zendesk URL in PDF body (zendesk.com/tickets/157521)
+        url_match = re.search(r'zendesk\.com/tickets/(\d+)', self.raw_text)
+        if url_match:
+            return url_match.group(1)
+
+        # Method 4: Look for #XXXXXX pattern in first 2000 chars (primary ticket)
         first_section = self.raw_text[:2000]
         primary_match = re.search(r'#(\d{5,7})\s+[\w\s]+-', first_section)
         if primary_match:
             return primary_match.group(1)
 
-        # Method 3: Fallback to "Ticket #" pattern anywhere
+        # Method 5: Fallback to "Ticket #" pattern anywhere
         fallback_match = re.search(r'Ticket #(\d+)', self.raw_text, re.IGNORECASE)
         return fallback_match.group(1) if fallback_match else None
 
