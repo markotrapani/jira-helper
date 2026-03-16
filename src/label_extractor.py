@@ -32,18 +32,21 @@ class LabelExtractor:
         'ssl', 'tls', 'certificate',
 
         # Operations (specific)
-        'upgrade', 'migration', 'failover',
+        'upgrade', 'migration', 'failover', 'performance',
 
         # Protocols/Features (specific modules/features)
         'modules', 'lua', 'rdb', 'aof',
-        'streams', 'pubsub', 'search', 'json', 'timeseries', 'graph', 'bloom'
+        'streams', 'pubsub', 'search', 'json', 'timeseries', 'graph', 'bloom',
+
+        # RDI / CDC
+        'rdi', 'debezium', 'cdc', 'oracle', 'poc',
     }
 
     # Generic keywords to EXCLUDE (too common, not useful for filtering)
     EXCLUDED_KEYWORDS = {
         'redis', 'cluster', 'database', 'shard', 'replica', 'slave', 'master',
         'replication', 'sync', 'synchronization', 'conflict', 'resolution', 'merge',
-        'memory', 'cpu', 'disk', 'network', 'latency', 'performance',
+        'memory', 'cpu', 'disk', 'network', 'latency',
         'connection', 'authentication', 'auth', 'encryption', 'cloud', 'enterprise',
         'backup', 'restore', 'recovery', 'restart', 'deployment', 'scaling', 'sharding',
         'scripts', 'persistence'

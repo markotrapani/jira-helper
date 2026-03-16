@@ -151,6 +151,13 @@ class JiraCreator:
                 print(f"⚠ Claude analysis failed ({e}), falling back to keyword-based extraction")
                 # Fall back to normal processing
 
+        # Auto-detect project from content if caller passed the default
+        if project == 'RED':
+            project = self._detect_project(
+                zendesk_data.get('summary', ''),
+                zendesk_data.get('description', '')
+            )
+
         # Map to Jira fields
         jira_data = self._map_zendesk_to_jira(zendesk_data, components, final_score, priority, project)
 
@@ -398,6 +405,21 @@ class JiraCreator:
         
         return cache_info
     
+    def _detect_project(self, summary: str, description: str) -> str:
+        """Detect Jira project from ticket content, falling back to RED."""
+        text = (summary + ' ' + description).lower()
+
+        rdi_keywords = [
+            'rdi', 'redis data integration', 'redis-data-integration',
+            'debezium', 'add_field', 'jmespath', 'redis.write',
+            'pipeline yml', 'pipeline yaml', 'cdc pipeline',
+            'json_parse', 'row_format', 'data integration'
+        ]
+        if any(kw in text for kw in rdi_keywords):
+            return 'RDSC'
+
+        return 'RED'
+
     def _detect_component(self, description: str) -> str:
         """Detect component from description."""
         description_lower = description.lower()
@@ -449,12 +471,7 @@ class JiraCreator:
 
         # Header section
         if ticket_type == "bug":
-            # Check if RCA is needed based on description
-            needs_rca = "rca" in jira_data.description.lower() or "root cause" in jira_data.description.lower()
-            if needs_rca:
-                lines.append("# JIRA BUG TICKET - RCA NEEDED")
-            else:
-                lines.append("# JIRA BUG TICKET - READY FOR SUBMISSION")
+            lines.append("# JIRA BUG TICKET")
         else:
             lines.append("# JIRA RCA TICKET")
 
@@ -687,7 +704,10 @@ class JiraCreator:
                 }
             },
             'suggested_jira_fields': {
-                'project': 'RED',  # Default to RED, could be enhanced with detection
+                'project': self._detect_project(
+                zendesk_data.get('summary', ''),
+                zendesk_data.get('description', '')
+            ),
                 'issue_type': 'Bug',
                 'priority': self.PRIORITY_MAPPINGS.get(priority.lower(), 'Medium'),
                 'severity': 'High' if final_score >= 70 else 'Medium' if final_score >= 50 else 'Low',

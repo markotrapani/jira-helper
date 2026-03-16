@@ -184,7 +184,7 @@ Examples:
         summary=summary,
         description=description,
         source=None,  # Don't include "zendesk" for R&D tickets
-        max_labels=5
+        max_labels=10
     )
 
     # Build custom JiraTicketData with Claude's content
@@ -198,7 +198,9 @@ Examples:
         labels=labels,
         custom_fields={
             'zendesk_id': zendesk_id,
-            'source': 'zendesk_claude_interactive'
+            'source': 'zendesk_claude_interactive',
+            'component': {'RDSC': 'RDI', 'MOD': 'Modules', 'DOC': 'Documentation'}.get(args.project, 'Redis'),
+            'environment': {'RDSC': 'Redis Data Integration (RDI)', 'MOD': 'Redis Modules'}.get(args.project, 'Redis Software'),
         }
     )
 
