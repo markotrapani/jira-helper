@@ -75,11 +75,14 @@ class IntelligentImpactEstimator:
         'essentials': ['essentials support', 'essentials package']
     }
 
-    # ARR amount patterns (e.g., "$5M ARR", "$10M+", "5-10M ARR")
+    # ARR amount patterns. Each entry is (regex, unit) where unit is 'M' or 'K'.
+    # Patterns are case-insensitive at match time.
     ARR_PATTERNS = [
-        r'\$(\d+)m[+\s]',  # $5M, $10M+
-        r'(\d+)m-(\d+)m arr',  # 5M-10M ARR
-        r'arr[:\s]+\$(\d+)m',  # ARR: $5M
+        (r'\$\s*(\d+(?:\.\d+)?)\s*m\b', 'M'),          # $5M, $5.5M, $ 10M
+        (r'\$\s*(\d+)\s*k\b', 'K'),                    # $500K, $750k
+        (r'arr[:\s]+\$\s*(\d+(?:\.\d+)?)\s*m\b', 'M'), # ARR: $5M
+        (r'arr[:\s]+\$\s*(\d+)\s*k\b', 'K'),           # ARR: $500K
+        (r'(\d+(?:\.\d+)?)\s*m[-–]\s*(\d+(?:\.\d+)?)\s*m\s*arr', 'M-M'),  # 5M-10M ARR
     ]
     
     # Keywords indicating workaround availability
@@ -372,102 +375,114 @@ class IntelligentImpactEstimator:
 
         Official Confluence Scoring:
         - ARR > $1M: 15 points
-        - $1M > ARR > $500K: 13 points
-        - $500K > ARR > $100K: 10 points
+        - $500K < ARR <= $1M: 13 points
+        - $100K < ARR <= $500K: 10 points
         - >10 low ARR customers: 8 points
         - <10 low ARR customers: 5 points
         - Single low ARR customer: 0 points
+
+        IMPORTANT: Support tier (Premium Enterprise, Enterprise, Standard)
+        is a contract-level classification and is NOT equivalent to ARR dollar
+        amount. A Premium Enterprise customer can sit anywhere in the ARR
+        bands. This estimator will only return a non-zero score when ARR is
+        explicitly stated (manual override, explicit $X M / $X K mention, or
+        multi-customer keywords). Support-tier hints are surfaced in the
+        reason string but do not drive the score. Pass --arr to set the
+        correct band when ARR is not in the ticket body.
         """
+        import re
         reasons = []
 
-        # If manual ARR override provided, use it
+        # 1. Manual ARR override wins over everything
         if self.manual_arr:
             arr_scores = {
-                '100k-500k': 10,    # $500K > ARR > $100K (Confluence official)
-                '500k-1M': 13,      # $1M > ARR > $500K (Confluence official)
-                '1M-5M': 15,        # ARR > $1M (Confluence official)
-                '5M-10M': 15,       # ARR > $1M (Confluence official)
-                '10M+': 15,         # ARR > $1M (Confluence official)
+                '100k-500k': 10,    # $100K < ARR <= $500K
+                '500k-1M': 13,      # $500K < ARR <= $1M
+                '1M-5M': 15,        # ARR > $1M
+                '5M-10M': 15,       # ARR > $1M
+                '10M+': 15,         # ARR > $1M
                 'unknown': 0
             }
             score = arr_scores.get(self.manual_arr, 0)
-            reasons.append(f"Manual ARR override: {self.manual_arr} → {score} points (Confluence)")
+            reasons.append(f"Manual ARR override: {self.manual_arr} → {score} points")
             return score, '; '.join(reasons)
 
-        # Check for customer name (handle None values)
         customer = (self.ticket_data.get('customer_name') or '').lower()
         desc = ((self.ticket_data.get('description') or '') + ' ' +
                 (self.ticket_data.get('summary') or '')).lower()
 
-        # Check support_tier field first (extracted directly from Zendesk organization notes)
-        support_tier = (self.ticket_data.get('support_tier') or '').lower()
-        if support_tier:
-            if 'premium' in support_tier and 'enterprise' in support_tier:
-                reasons.append(f"Support tier '{support_tier}' detected (ARR > $1M)")
-                return 15, '; '.join(reasons)
-            elif 'vip' in support_tier:
-                reasons.append(f"Support tier '{support_tier}' detected (ARR > $1M)")
-                return 15, '; '.join(reasons)
-            elif 'enterprise' in support_tier:
-                reasons.append(f"Support tier '{support_tier}' detected (likely $500K-$1M)")
-                return 13, '; '.join(reasons)
-
-        # Check for explicit ARR amounts in description (e.g., "$5M ARR", "5M-10M ARR")
-        import re
-        for pattern in self.ARR_PATTERNS:
+        # 2. Explicit ARR dollar amounts in description
+        for pattern, unit in self.ARR_PATTERNS:
             match = re.search(pattern, desc, re.IGNORECASE)
-            if match:
-                arr_value = int(match.group(1))  # Get first captured group
-                if arr_value >= 1:  # $1M or more
-                    reasons.append(f"ARR ${arr_value}M detected in description (ARR > $1M)")
-                    return 15, '; '.join(reasons)
-                elif arr_value >= 500:  # $500K-$1M (captured in thousands)
-                    reasons.append(f"ARR ~${arr_value}K detected (likely $500K-$1M)")
-                    return 13, '; '.join(reasons)
+            if not match:
+                continue
+            # Extract the primary value (first capture group is the low/only end)
+            try:
+                primary = float(match.group(1))
+            except (ValueError, IndexError):
+                continue
+            # Convert to dollars
+            if unit == 'K':
+                dollars = primary * 1_000
+            else:  # 'M' or 'M-M' (use lower bound for ranges to be conservative)
+                dollars = primary * 1_000_000
+            # Map to band
+            if dollars > 1_000_000:
+                reasons.append(f"Explicit ARR ~${primary}{unit} detected (> $1M band)")
+                return 15, '; '.join(reasons)
+            elif dollars > 500_000:
+                reasons.append(f"Explicit ARR ~${primary}{unit} detected ($500K-$1M band)")
+                return 13, '; '.join(reasons)
+            elif dollars > 100_000:
+                reasons.append(f"Explicit ARR ~${primary}{unit} detected ($100K-$500K band)")
+                return 10, '; '.join(reasons)
+            else:
+                reasons.append(f"Explicit ARR ~${primary}{unit} detected (low ARR band)")
+                return 0, '; '.join(reasons)
 
-        # Check for support tier in organization notes (Premium Enterprise = high ARR)
-        for tier, keywords in self.SUPPORT_TIER_KEYWORDS.items():
-            for kw in keywords:
-                if kw in desc:
-                    if tier == 'premium_enterprise':
-                        reasons.append(f"'{kw}' support tier detected (ARR > $1M)")
-                        return 15, '; '.join(reasons)
-                    elif tier == 'enterprise':
-                        reasons.append(f"'{kw}' support tier detected (likely $500K-$1M)")
-                        return 13, '; '.join(reasons)
-
-        # Check for multiple customers (low ARR)
+        # 3. Multiple customers heuristic
         multiple_customers_keywords = [
             'multiple customers', 'several customers', 'many customers',
             'numerous customers', 'various customers'
         ]
         if any(keyword in desc for keyword in multiple_customers_keywords):
-            # Try to determine if >10 or <10 customers
-            if any(word in desc for word in ['>10', 'more than 10', 'over 10', 'many', 'numerous']):
+            if any(word in desc for word in ['>10', 'more than 10', 'over 10', 'numerous']):
                 reasons.append(">10 low ARR customers mentioned")
                 return 8, '; '.join(reasons)
             else:
                 reasons.append("<10 low ARR customers mentioned")
                 return 5, '; '.join(reasons)
 
-        # Check labels for customer tier indicators
-        labels_str = ' '.join(self.ticket_data.get('labels', [])).lower()
-        if 'enterprise' in labels_str or 'premium' in labels_str:
-            reasons.append("Enterprise/Premium labels found (likely $500K-$1M ARR)")
-            return 13, '; '.join(reasons)
+        # 4. Support tier / label hints — surface as context only, do NOT score.
+        tier_hint = None
+        support_tier = (self.ticket_data.get('support_tier') or '').lower()
+        if support_tier:
+            tier_hint = support_tier
+        else:
+            for tier, keywords in self.SUPPORT_TIER_KEYWORDS.items():
+                for kw in keywords:
+                    if kw in desc:
+                        tier_hint = tier
+                        break
+                if tier_hint:
+                    break
+            if not tier_hint:
+                labels_str = ' '.join(self.ticket_data.get('labels', [])).lower()
+                if 'enterprise' in labels_str or 'premium' in labels_str:
+                    tier_hint = 'enterprise_or_premium (from labels)'
 
-        # Check for subscription level mentions
-        if 'essentials' in desc or 'standard' in desc:
-            reasons.append("Standard subscription tier mentioned (likely $100K-$500K ARR)")
-            return 10, '; '.join(reasons)
-
-        # Check if single customer is mentioned
-        if customer or 'customer' in desc:
-            reasons.append("Single customer mentioned, ARR unknown (assuming low ARR)")
+        if tier_hint:
+            reasons.append(
+                f"Support tier hint: '{tier_hint}'. Tier does not imply an ARR band; "
+                f"pass --arr to set the correct band. Defaulting to 0."
+            )
             return 0, '; '.join(reasons)
 
-        # Default: No customer information
-        reasons.append("No customer information found")
+        # 5. Default: no ARR signal
+        if customer or 'customer' in desc:
+            reasons.append("Customer mentioned but ARR unknown; pass --arr for correct scoring")
+        else:
+            reasons.append("No customer information found")
         return 0, '; '.join(reasons)
     
     def estimate_sla_breach(self) -> Tuple[int, str]:

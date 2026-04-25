@@ -77,10 +77,31 @@ PRIORITY LEVEL: HIGH
 - Keywords: "critical", "outage", "degraded", "error"
 
 ### 2. Customer ARR (0-15)
-**Checks:**
-- VIP customer list (Monday.com, Salesforce, Stripe, etc.)
-- Description mentions of customers
-- Labels: "enterprise", "premium"
+
+**Scoring bands (official Confluence guidelines):**
+
+| Score | Condition |
+|-------|-----------|
+| 15 | ARR > $1M |
+| 13 | $500K < ARR ≤ $1M |
+| 10 | $100K < ARR ≤ $500K |
+| 8  | >10 low-ARR customers affected |
+| 5  | <10 low-ARR customers affected |
+| 0  | Single low-ARR customer, or ARR unknown |
+
+**Automatic detection looks for:**
+- Explicit dollar amounts in the ticket body (e.g. `$5M ARR`, `$750K ARR`, `ARR: $250K`)
+- Multi-customer phrasings (`multiple customers`, `several customers`, etc.)
+
+**Support tier is NOT ARR.** Contract-level tiers (Premium Enterprise, Enterprise, Standard, VIP) are *not* mapped to ARR bands, because a Premium Enterprise customer can sit anywhere in the ARR range. If a support tier is detected in the ticket, the estimator surfaces it as a hint in the reason string but returns **0** and prompts you to pass `--arr` manually.
+
+**When in doubt, pass `--arr` explicitly:**
+
+```bash
+python src/intelligent_estimator.py ticket.pdf --arr 500k-1M
+```
+
+Valid values: `100k-500k`, `500k-1M`, `1M-5M`, `5M-10M`, `10M+`, `unknown`.
 
 ### 3. SLA Breach (0 or 8)
 **Checks:**
