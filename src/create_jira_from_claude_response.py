@@ -179,6 +179,37 @@ Examples:
     # Create Jira ticket data
     creator = JiraCreator()
 
+    # Auto-detect project if not explicitly overridden
+    project = args.project
+    if project == 'RED':
+        project = creator._detect_project(summary, description)
+
+    # Auto-detect modules: use summary tags/keywords first (captures both
+    # versioned refs like "[RediSearch 8.2.8]" and bare tags like "[JSON]"),
+    # fall back to all version strings in description.
+    summary_modules = creator._detect_summary_modules(summary)
+    all_modules = creator._extract_module_versions(summary + ' ' + description)
+
+    # Backfill versions from description for modules detected in summary without one
+    for mod, ver in summary_modules.items():
+        if not ver and mod in all_modules:
+            summary_modules[mod] = all_modules[mod]
+
+    relevant_modules = summary_modules if summary_modules else all_modules
+
+    if relevant_modules:
+        detected_components = list(relevant_modules.keys())
+        component_str = ', '.join(detected_components)
+    else:
+        component_str = {'RDSC': 'RDI', 'MOD': 'Modules', 'DOC': 'Documentation'}.get(project, 'Redis')
+
+    # Affects version: use the primary module from the relevant set
+    affects_version = ''
+    if relevant_modules:
+        primary_module = next(iter(relevant_modules))
+        primary_version = relevant_modules[primary_module]
+        affects_version = f"{primary_module} {primary_version}"
+
     # Extract keyword-based labels from ticket content (R&D tickets - no source label)
     labels = extract_labels(
         summary=summary,
@@ -189,7 +220,7 @@ Examples:
 
     # Build custom JiraTicketData with Claude's content
     jira_data = JiraTicketData(
-        project=args.project,
+        project=project,
         issue_type='Bug',
         summary=summary,
         description=description,
@@ -199,8 +230,9 @@ Examples:
         custom_fields={
             'zendesk_id': zendesk_id,
             'source': 'zendesk_claude_interactive',
-            'component': {'RDSC': 'RDI', 'MOD': 'Modules', 'DOC': 'Documentation'}.get(args.project, 'Redis'),
-            'environment': {'RDSC': 'Redis Data Integration (RDI)', 'MOD': 'Redis Modules'}.get(args.project, 'Redis Software'),
+            'component': component_str,
+            'environment': {'RDSC': 'Redis Data Integration (RDI)', 'MOD': 'Redis Modules'}.get(project, 'Redis Software'),
+            'version': affects_version,
         }
     )
 

@@ -11,6 +11,7 @@ Usage:
 """
 
 import sys
+import re
 import argparse
 import json
 from pathlib import Path
@@ -405,20 +406,153 @@ class JiraCreator:
         
         return cache_info
     
+    # Module names that indicate a MOD project ticket
+    MODULE_NAMES = {
+        'redisearch', 'search', 'rejson', 'redisjson', 'redisbloom',
+        'redistimeseries', 'redisgraph', 'redisai', 'bf', 'timeseries', 'graph',
+    }
+
+    # Pattern to extract module version strings like "search:8.2.8" or "ReJSON:8.2.8"
+    MODULE_VERSION_PATTERN = re.compile(
+        r'\b(search|rejson|redisjson|redisearch|bf|bloom|timeseries|graph|redisai)'
+        r'[:\s]+(\d+\.\d+\.\d+)',
+        re.IGNORECASE
+    )
+
     def _detect_project(self, summary: str, description: str) -> str:
         """Detect Jira project from ticket content, falling back to RED."""
         text = (summary + ' ' + description).lower()
 
         rdi_keywords = [
-            'rdi', 'redis data integration', 'redis-data-integration',
-            'debezium', 'add_field', 'jmespath', 'redis.write',
-            'pipeline yml', 'pipeline yaml', 'cdc pipeline',
-            'json_parse', 'row_format', 'data integration'
+            r'\brdi\b', r'redis data integration', r'redis-data-integration',
+            r'\bdebezium\b', r'\badd_field\b', r'\bjmespath\b', r'redis\.write',
+            r'pipeline yml', r'pipeline yaml', r'cdc pipeline',
+            r'\bjson_parse\b', r'\brow_format\b',
         ]
-        if any(kw in text for kw in rdi_keywords):
+        if any(re.search(kw, text) for kw in rdi_keywords):
             return 'RDSC'
 
+        if self._is_module_issue(summary, description):
+            return 'MOD'
+
         return 'RED'
+
+    def _is_module_issue(self, summary: str, description: str) -> bool:
+        """Determine if the issue is module-related based on content signals."""
+        text = (summary + ' ' + description).lower()
+
+        # Strong signals: module commands or module-specific terms in summary
+        summary_lower = summary.lower()
+        module_command_prefixes = [
+            'ft.', 'ft_', 'json.', 'ts.', 'bf.', 'cf.', 'cms.', 'topk.',
+            'graph.', 'ai.', 'search.', 'hnsw', 'knn',
+        ]
+        if any(prefix in summary_lower for prefix in module_command_prefixes):
+            return True
+
+        # Strong signal: module name in square brackets in summary (e.g., "[RediSearch 8.2.8]")
+        if re.search(r'\[(?:redisearch|rejson|redisjson|search|bloom|timeseries|graph|redisai)', summary_lower):
+            return True
+
+        # Module version strings present (e.g., "search:8.2.8")
+        if self.MODULE_VERSION_PATTERN.search(text):
+            module_keywords_in_summary = [
+                'search', 'json index', 'vector index', 'hnsw', 'knn',
+                'ft.search', 'ft.info', 'ft.create', 'ft.aggregate', 'ft.profile',
+                'json.get', 'json.set', 'json.del',
+                'ts.add', 'ts.range', 'ts.get',
+                'redisearch', 'rejson', 'redisjson', 'redisbloom',
+                'redistimeseries', 'redisgraph', 'redisai',
+                'index corruption', 'index non-functional', 'indexing',
+            ]
+            if any(kw in text for kw in module_keywords_in_summary):
+                return True
+
+        return False
+
+    def _extract_module_versions(self, text: str) -> dict:
+        """Extract module name-to-version mappings from text."""
+        versions = {}
+        for match in self.MODULE_VERSION_PATTERN.finditer(text):
+            module_name = match.group(1).lower()
+            version = match.group(2)
+            canonical = self._canonical_module_name(module_name)
+            versions[canonical] = version
+        return versions
+
+    # Tag/keyword patterns in summary that indicate a specific module
+    # Maps tag text to canonical component name
+    SUMMARY_MODULE_TAGS = {
+        'json': 'ReJSON',
+        'rejson': 'ReJSON',
+        'redisjson': 'ReJSON',
+        'search': 'RediSearch',
+        'redisearch': 'RediSearch',
+        'hnsw': 'RediSearch',
+        'knn': 'RediSearch',
+        'bloom': 'RedisBloom',
+        'bf': 'RedisBloom',
+        'timeseries': 'RedisTimeSeries',
+        'ts': 'RedisTimeSeries',
+        'graph': 'RedisGraph',
+        'redisai': 'RedisAI',
+    }
+
+    def _detect_summary_modules(self, summary: str) -> dict:
+        """
+        Detect relevant modules from summary tags like [JSON], [HNSW], [RediSearch 8.2.8].
+        Returns dict of canonical_name -> version (version may be empty string).
+        """
+        modules = {}
+        summary_lower = summary.lower()
+
+        # First, get any versioned modules from the summary
+        for match in self.MODULE_VERSION_PATTERN.finditer(summary):
+            module_name = match.group(1).lower()
+            version = match.group(2)
+            canonical = self._canonical_module_name(module_name)
+            modules[canonical] = version
+
+        # Then, look for bracket tags like [JSON], [HNSW]
+        bracket_tags = re.findall(r'\[([^\]]+)\]', summary_lower)
+        for tag in bracket_tags:
+            tag_clean = tag.strip()
+            # Check if tag (minus version) maps to a module
+            tag_word = tag_clean.split()[0] if tag_clean else ''
+            if tag_word in self.SUMMARY_MODULE_TAGS:
+                canonical = self.SUMMARY_MODULE_TAGS[tag_word]
+                if canonical not in modules:
+                    modules[canonical] = ''
+
+        # Also check for command prefixes that imply modules
+        prefix_to_module = {
+            'ft.': 'RediSearch', 'ft_': 'RediSearch',
+            'json.': 'ReJSON',
+            'ts.': 'RedisTimeSeries',
+            'bf.': 'RedisBloom', 'cf.': 'RedisBloom',
+            'graph.': 'RedisGraph',
+        }
+        for prefix, canonical in prefix_to_module.items():
+            if prefix in summary_lower and canonical not in modules:
+                modules[canonical] = ''
+
+        return modules
+
+    @staticmethod
+    def _canonical_module_name(name: str) -> str:
+        """Map module name variants to canonical Jira component names."""
+        mapping = {
+            'search': 'RediSearch',
+            'redisearch': 'RediSearch',
+            'rejson': 'ReJSON',
+            'redisjson': 'ReJSON',
+            'bf': 'RedisBloom',
+            'bloom': 'RedisBloom',
+            'timeseries': 'RedisTimeSeries',
+            'graph': 'RedisGraph',
+            'redisai': 'RedisAI',
+        }
+        return mapping.get(name.lower(), name)
 
     def _detect_component(self, description: str) -> str:
         """Detect component from description."""
