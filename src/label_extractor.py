@@ -27,15 +27,11 @@ class LabelExtractor:
         'acre', 'azure', 'aws', 'gcp', 'kubernetes', 'k8s',
         'rlec',
 
-        # Common issue types (specific enough to be useful)
-        'crash', 'timeout', 'acl', 'rbac',
-        'ssl', 'tls', 'certificate',
+        # Security (specific)
+        'acl', 'rbac', 'ssl', 'tls', 'certificate',
 
-        # Operations (specific)
-        'upgrade', 'migration', 'failover', 'performance',
-
-        # Protocols/Features (specific modules/features)
-        'modules', 'lua', 'rdb', 'aof',
+        # Features (specific enough to be useful as labels)
+        'lua', 'rdb', 'aof',
         'streams', 'pubsub', 'search', 'json', 'timeseries', 'graph', 'bloom',
 
         # RDI / CDC
@@ -49,8 +45,18 @@ class LabelExtractor:
         'memory', 'cpu', 'disk', 'network', 'latency',
         'connection', 'authentication', 'auth', 'encryption', 'cloud', 'enterprise',
         'backup', 'restore', 'recovery', 'restart', 'deployment', 'scaling', 'sharding',
-        'scripts', 'persistence'
+        'scripts', 'persistence',
+        'crash', 'timeout', 'upgrade', 'migration', 'failover', 'performance', 'modules',
     }
+
+    # Module names that appear in version strings (e.g., "search:8.2.8").
+    # These should only be extracted as labels if they appear as substantive
+    # topic references, not just as part of an installed-modules list.
+    MODULE_VERSION_PATTERN = re.compile(
+        r'\b(search|rejson|redisjson|redisearch|bf|bloom|timeseries|graph|redisai)'
+        r'[:\s]*\d+\.\d+',
+        re.IGNORECASE
+    )
 
     # Customer name patterns (extract from summary)
     CUSTOMER_PATTERN = re.compile(r'^([A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?)\s*-', re.IGNORECASE)
@@ -147,6 +153,13 @@ class LabelExtractor:
 
         return None
 
+    # Keywords that overlap with Redis module names — only label them if they
+    # appear outside of a "module:version" context (e.g., as a topic in the
+    # summary or as a command prefix like FT.SEARCH).
+    _MODULE_NAME_KEYWORDS = {
+        'search', 'json', 'timeseries', 'graph', 'bloom', 'modules',
+    }
+
     def _extract_technical_keywords(self, text: str) -> Set[str]:
         """
         Extract technical keywords from text.
@@ -163,12 +176,19 @@ class LabelExtractor:
         text_lower = text.lower()
         found_keywords = set()
 
-        # Check for each known technical keyword
+        # Strip out module version strings so "search:8.2.8" doesn't match "search"
+        text_without_versions = self.MODULE_VERSION_PATTERN.sub('', text_lower)
+
         for keyword in self.technical_keywords:
-            # Look for whole word matches (avoid false positives)
             pattern = r'\b' + re.escape(keyword) + r'\b'
-            if re.search(pattern, text_lower):
-                found_keywords.add(keyword)
+
+            if keyword in self._MODULE_NAME_KEYWORDS:
+                # For module-overlapping keywords, only match in the version-stripped text
+                if re.search(pattern, text_without_versions):
+                    found_keywords.add(keyword)
+            else:
+                if re.search(pattern, text_lower):
+                    found_keywords.add(keyword)
 
         return found_keywords
 
